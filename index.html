@@ -75,6 +75,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { friendTable } from './friend-table.js';
 
 const IMAGES = [
   { file: 'images/bringing-in-the-herd.jpg', name: 'Bringing in the Herd' },
@@ -152,13 +153,13 @@ function edgeCurve(ax, ay, bx, by, sign, tab, n) {
 }
 
 // ── build the puzzle from the loaded texture ──
-function buildPuzzle(pieceTarget, restore) {
+function buildPuzzle(pieceTarget, restore, layout) {
   if (puzzle) { scene.remove(puzzle.group); scene.remove(puzzle.boardGroup); scene.remove(puzzle.refGroup); disposeGroup(puzzle.group); }
   placed = 0;
   rng = mulberry32(seed || 1);   // seeded so the exact same puzzle regenerates on resume
   // choose a grid near the target piece count that respects the image aspect
-  let cols = Math.max(2, Math.round(Math.sqrt(pieceTarget * imgAspect)));
-  let rows = Math.max(2, Math.round(pieceTarget / cols));
+  const cols = layout?.cols ?? Math.max(2, Math.round(Math.sqrt(pieceTarget * imgAspect)));
+  const rows = layout?.rows ?? Math.max(2, Math.round(pieceTarget / cols));
   // bigger counts -> bigger board (each piece stays ~the same size), something to zoom around
   BOARD_W = cols * 1.7;
   BOARD_D = BOARD_W / imgAspect;
@@ -299,7 +300,7 @@ function ndcFrom(ev) { const r = canvas.getBoundingClientRect(); ndc.x = ((ev.cl
 function groundPoint(ev) { ndcFrom(ev); raycaster.setFromCamera(ndc, camera); const p = new THREE.Vector3(); raycaster.ray.intersectPlane(groundPlane, p); return p; }
 
 canvas.addEventListener('pointerdown', (ev) => {
-  if (!puzzle) return;
+  if (!puzzle || (friends.online && (!friends.connected || cur !== friendSeat || !friendReady))) return;
   ndcFrom(ev); raycaster.setFromCamera(ndc, camera);
   const hits = raycaster.intersectObjects(puzzle.pieces.filter(m => !m.userData.placed), false);
   if (!hits.length) return;
@@ -322,14 +323,10 @@ function tryPlace(m) {
   const dist = Math.hypot(m.position.x, m.position.z);   // home is baked at origin
   const near = Math.max(BOARD_W, BOARD_D) * 0.055;
   if (dist < near) {
-    m.position.set(0, 0, 0); m.rotation.y = 0;           // correct: fuse to board, permanent
-    m.userData.placed = true; placed++;
-    if (players[cur]) players[cur].score++;
-    if (difficulty !== 'hard') flashDot(m, 0x3ad46a);    // green
-    renderScoreboard(); saveState();
-    if (placed === puzzle.pieces.length) { endGame(); return; }
-    if (players.length > 1) { cur = (cur + 1) % players.length; renderScoreboard(); setMsg(players[cur].name + "'s turn — drag a piece to its spot."); }
-    else setMsg('Placed! ' + placed + ' / ' + puzzle.pieces.length);
+    if (friends.online) {
+      m.position.y = 0.2;
+      friends.move(m.userData.id);
+    } else placePiece(m);
   } else if (dist < near * 2.4) {
     if (difficulty !== 'hard') flashDot(m, 0xf2c200);    // yellow = close
     setMsg('Close. Nudge it onto its spot.');
@@ -339,6 +336,21 @@ function tryPlace(m) {
     setMsg(players.length > 1 ? (players[cur].name + ': not there — try again.') : 'Not there. Try another spot.');
     m.position.y = 0.2;
   }
+}
+function placePiece(m, replay = false) {
+  m.position.set(0, 0, 0); m.rotation.y = 0;
+  m.userData.placed = true; placed++;
+  players[cur].score++;
+  if (!replay && difficulty !== 'hard') flashDot(m, 0x3ad46a);
+  if (placed === puzzle.pieces.length) { renderScoreboard(); saveState(); endGame(); return; }
+  if (players.length > 1) cur = (cur + 1) % players.length;
+  renderScoreboard(); saveState();
+  if (players.length > 1) showTurn();
+  else setMsg('Placed! ' + placed + ' / ' + puzzle.pieces.length);
+}
+function showTurn() {
+  setMsg(friends.online && cur !== friendSeat ? `Waiting for ${players[cur].name} to place a piece.`
+    : `${players[cur].name}'s turn — drag a piece to its spot.`);
 }
 function endGame() {
   if (players.length > 1) {
@@ -363,7 +375,7 @@ function defaultSeats() {
     { active: false, avatar: AVATARS[3], colorIdx: 3, name: '' },
   ];
 }
-function openLobby() { if (!seats.length) seats = defaultSeats(); renderLobby(); document.getElementById('lobby').classList.remove('hide'); }
+function openLobby() { if (friends.online) return friends.leave(); if (!seats.length) seats = defaultSeats(); renderLobby(); document.getElementById('lobby').classList.remove('hide'); }
 function usedColor(idx, ex) { return seats.some((s, i) => i !== ex && s.active && s.colorIdx === idx); }
 function nextFreeColor(i) { let idx = seats[i].colorIdx; for (let k = 0; k < 4; k++) { idx = (idx + 1) % 4; if (!usedColor(idx, i)) break; } return idx; }
 function escAttr(s) { return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
@@ -401,8 +413,8 @@ function renderLobby() {
         <label>Hints <select id="lb_diff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard (no hints)</option></select></label>
       </div>
       <button class="btn full" onclick="startFromLobby()">Start puzzle</button>
-      <button class="btn ghost full" type="button" disabled>Online play coming soon</button>
-      <p class="hint">Play solo or take turns on the same screen. Online tables are not connected yet.</p>
+      <button class="btn ghost full" type="button" onclick="inviteFriend()">Invite friends online</button>
+      <p class="hint">Online tables use gallery pictures. Uploaded pictures stay on your device.</p>
     </div>`;
 }
 function cycleAvatar(i) { seats[i].avatar = AVATARS[(AVATARS.indexOf(seats[i].avatar) + 1) % AVATARS.length]; renderLobby(); }
@@ -427,7 +439,7 @@ function startFromLobby() {
 // ── save / resume (localStorage). The exact puzzle regenerates from its seed. ──
 const SAVE_KEY = 'pz_save';
 function saveState() {
-  if (!puzzle) return;
+  if (!puzzle || friends.online) return;
   try {
     const data = {
       v: 1, seed, picVal: currentPicVal, uploadSrc: currentPicVal === 'upload' ? uploadSrc : null,
@@ -452,13 +464,14 @@ function continueGame() {
   loadSource(src, s.pieces, s);
 }
 
-function loadSource(src, pieceCount, restore) {
+function loadSource(src, pieceCount, restore, { layout, ready } = {}) {
   setMsg('Loading...');
   texLoader.load(src, (t) => {
     t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
     texture = t; imgAspect = (t.image && t.image.width ? t.image.width / t.image.height : 1.4);
-    buildPuzzle(pieceCount || 100, restore);
+    buildPuzzle(pieceCount || 100, restore, layout);
     resetView();
+    ready?.();
   }, undefined, () => setMsg('Could not load that image.'));
 }
 
@@ -487,6 +500,7 @@ function tick() {
 }
 // ── demo autoplay + canvas recorder, used to capture real gameplay for the promo ──
 window.pzAutoPlay = function (opts) {
+  if (friends.online) return;
   opts = opts || {}; if (!puzzle) return;
   const order = puzzle.pieces.filter(m => !m.userData.placed).sort(() => Math.random() - 0.5);
   const n = opts.count ? Math.min(opts.count, order.length) : order.length;
@@ -510,12 +524,52 @@ window.pzRecordStop = function () {
   });
 };
 
+let friendSeat = 0, friendState, friendMoves = 0, friendReady = false;
+function applyFriendMoves() {
+  const pending = friendState.moves.slice(friendMoves);
+  for (const id of pending) {
+    const piece = puzzle.pieces[id];
+    if (piece) placePiece(piece, pending.length > 1);
+  }
+  friendMoves = friendState.moves.length;
+  if (placed < puzzle.pieces.length) showTurn();
+}
+const friends = friendTable({
+  settings() {
+    const picture = document.getElementById('lb_img').value;
+    if (picture === 'upload') { alert('Choose a gallery picture for an online table.'); return null; }
+    return { image: Number(picture), pieces: Number(document.getElementById('lb_pieces').value),
+      difficulty: document.getElementById('lb_diff').value, name: seats[0].name };
+  },
+  status: setMsg,
+  update(state, you) {
+    const first = !friendState;
+    friendState = state;
+    if (first) {
+      friendSeat = state.players.findIndex(player => player.user_id === you);
+      players = state.players.map((player, i) => ({ name: player.username, score: 0, color: PCOLORS[i], avatar: AVATARS[i] }));
+      cur = 0;
+      seed = state.options.seed;
+      difficulty = state.options.difficulty;
+      outlinesOn = difficulty !== 'hard';
+      document.getElementById('lobby').classList.add('hide');
+      loadSource(IMAGES[state.options.image].file, state.options.pieces, null, {
+        layout: state.options,
+        ready() {
+          friendReady = true;
+          applyFriendMoves();
+        },
+      });
+    } else if (friendReady) applyFriendMoves();
+  },
+});
 window.openLobby = openLobby; window.startFromLobby = startFromLobby; window.setMode = setMode; window.continueGame = continueGame;
 window.cycleAvatar = cycleAvatar; window.cycleColor = cycleColor; window.toggleSeat = toggleSeat; window.setName = setName; window.onUpload = onUpload;
+window.inviteFriend = friends.invite;
 window.toggleOutlines = () => setOutlines(!outlinesOn);
 window.solveHint = () => { if (puzzle) scatter(); };
 
-resize(); tick(); openLobby();
+resize(); tick(); openLobby(); friends.join();
 </script>
 </body>
 </html>

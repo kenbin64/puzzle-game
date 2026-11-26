@@ -57,7 +57,7 @@
   <canvas id="cv"></canvas>
   <div class="overlay top">
     <h1>Puzzle Maker</h1>
-    <div id="msg">Loading puzzle...</div>
+    <div id="msg" role="status">Loading puzzle...</div>
   </div>
   <div class="players" id="players"></div>
   <div class="bar">
@@ -136,7 +136,7 @@ let placed = 0;
 const AVATARS = ['\u{1F98A}','\u{1F43C}','\u{1F438}','\u{1F981}','\u{1F428}','\u{1F435}','\u{1F419}','\u{1F989}','\u{1F432}','\u{1F984}','\u{1F422}','\u{1F437}'];
 const PCOLORS = [0xe0533b, 0x3ad46a, 0x4d9be8, 0xf2c200];
 const PCOLOR_NAMES = ['Red', 'Green', 'Blue', 'Gold'];
-let seats = [], players = [], cur = 0, mode = 'solo', difficulty = 'normal';
+let seats = [], players = [], mode = 'solo', difficulty = 'normal', onlineMode = 'cooperative';
 let uploadSrc = null, uploadName = '';
 let seed = 0, rng = Math.random, currentPicVal = '0', currentPieceTarget = 100;
 function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
@@ -251,8 +251,7 @@ function buildPuzzle(pieceTarget, restore, layout) {
     placed = restore.placed.length;
   }
   renderScoreboard();
-  if (restore && restore.placed) setMsg(players.length > 1 ? (players[cur].name + "'s turn — continue the puzzle. " + placed + ' / ' + puzzle.pieces.length) : ('Resumed — ' + placed + ' / ' + puzzle.pieces.length + ' placed.'));
-  else setMsg(players.length > 1 ? (players[cur].name + "'s turn — drag a piece to its spot.") : 'Drag a piece to its spot. Match the picture above.');
+  showProgress();
   saveState();
 }
 
@@ -307,10 +306,10 @@ function setOutlines(on) {
 function disposeGroup(g) { g.traverse(o => { if (o.geometry) o.geometry.dispose(); }); }
 function renderScoreboard() {
   const el = document.getElementById('players');
-  if (!players.length) { el.innerHTML = ''; return; }
-  if (players.length === 1) { el.innerHTML = `<div class="pcard"><div class="nm">Pieces</div><div class="sc">${players[0].score}${puzzle ? ' / ' + puzzle.pieces.length : ''}</div></div>`; return; }
-  el.innerHTML = players.map((p, i) => `<div class="pcard ${i === cur ? 'on' : ''}"><div class="nm"><span class="av">${p.avatar}</span><span class="dot" style="background:#${p.color.toString(16).padStart(6, '0')}"></span>${p.name}</div><div class="sc">${p.score}</div></div>`).join('');
+  const progress = `<div class="pcard"><div class="nm">Pieces</div><div class="sc">${placed} / ${puzzle.pieces.length}</div></div>`;
+  el.innerHTML = progress + (isCompetitive() ? players.map(p => `<div class="pcard"><div class="nm"><span class="av">${p.avatar}</span><span class="dot" style="background:#${p.color.toString(16).padStart(6, '0')}"></span>${escAttr(p.name)}</div><div class="sc">${p.score}</div></div>`).join('') : '');
 }
+function isCompetitive() { return friends.online && friendState?.options.mode === 'competitive'; }
 function setMsg(t) { document.getElementById('msg').textContent = t; }
 
 // ── picking / dragging ──
@@ -318,7 +317,7 @@ let dragging = null, selected = null, selectionOutline = null;
 const dragOffset = new THREE.Vector3();
 const rotationButtons = ['rotate-left', 'rotate-right'].map(id => document.getElementById(id));
 function canMovePiece() {
-  return !!puzzle && (!friends.online || (friends.connected && cur === friendSeat && friendReady));
+  return !!puzzle && (!friends.online || (friends.connected && friendReady));
 }
 function selectPiece(piece) {
   if (selected === piece) return;
@@ -397,37 +396,72 @@ function tryPlace(m) {
     m.position.y = 0.2;
   } else {
     if (difficulty !== 'hard') flashDot(m, 0xe0533b);    // red = wrong, stays liftable
-    setMsg(players.length > 1 ? (players[cur].name + ': not there — try again.') : 'Not there. Try another spot.');
+    setMsg('Not there. Try another spot.');
     m.position.y = 0.2;
   }
 }
 function snapHome(piece) {
+  if (dragging?.piece === piece) {
+    dragging = null;
+    controls.enabled = true;
+  }
   piece.position.copy(piece.userData.home);
   piece.rotation.y = 0;
   piece.userData.placed = true;
   if (selected === piece) selectPiece(null);
 }
-function placePiece(m, replay = false) {
+function placePiece(m, owner = 0, replay = false) {
   snapHome(m);
   placed++;
-  players[cur].score++;
+  players[owner].score++;
   if (!replay && difficulty !== 'hard') flashDot(m, 0x3ad46a);
-  if (placed === puzzle.pieces.length) { renderScoreboard(); saveState(); endGame(); return; }
-  if (players.length > 1) cur = (cur + 1) % players.length;
   renderScoreboard(); saveState();
-  if (players.length > 1) showTurn();
-  else setMsg('Placed! ' + placed + ' / ' + puzzle.pieces.length);
+  if (placed === puzzle.pieces.length) endGame();
+  else showProgress();
 }
-function showTurn() {
-  setMsg(friends.online && cur !== friendSeat ? `Waiting for ${players[cur].name} to place a piece.`
-    : `${players[cur].name}'s turn — drag a piece to its spot.`);
+function showProgress() {
+  if (isCompetitive()) setMsg('Place as many pieces as you can.');
+  else if (friends.online || mode === 'local') setMsg('Build the shared puzzle together.');
+  else setMsg('Drag a piece to its spot. Match the picture above.');
 }
 function endGame() {
-  if (players.length > 1) {
+  if (isCompetitive()) {
     const best = Math.max(...players.map(p => p.score));
     const w = players.filter(p => p.score === best).map(p => p.name);
-    setMsg(w.length === 1 ? ('Complete! ' + w[0] + ' wins with ' + best + ' pieces.') : ('Complete! Tie at ' + best + ': ' + w.join(', ')));
-  } else setMsg('Puzzle complete! ' + placed + ' pieces.');
+    setMsg(w.length === 1 ? (`Puzzle complete! ${w[0]} wins with ${best} pieces!`) : (`Puzzle complete! ${w.join(' and ')} tie with ${best} pieces each!`));
+  } else if (players.length > 1) {
+    const names = new Intl.ListFormat(undefined, { style: 'long', type: 'conjunction' }).format(players.map(player => player.name));
+    setMsg(`Great work, ${names}! You solved the puzzle together.`);
+  } else setMsg(`Great work! You solved all ${placed} pieces.`);
+  playFanfare();
+}
+
+let celebrationAudio;
+function unlockFanfareAudio() {
+  if (!celebrationAudio && window.AudioContext) celebrationAudio = new AudioContext();
+  if (celebrationAudio?.state === 'suspended') celebrationAudio.resume().catch(() => {});
+}
+document.addEventListener('click', unlockFanfareAudio);
+document.addEventListener('pointerdown', unlockFanfareAudio);
+function playFanfare() {
+  if (celebrationAudio?.state !== 'running') return;
+  const time = celebrationAudio.currentTime;
+  for (const [frequency, offset, duration] of [
+    [523.25, 0, 0.16], [659.25, 0.13, 0.16], [783.99, 0.26, 0.16],
+    [1046.50, 0.39, 0.55], [783.99, 0.39, 0.55], [659.25, 0.39, 0.55],
+  ]) {
+    const note = celebrationAudio.createOscillator();
+    const volume = celebrationAudio.createGain();
+    const start = time + offset;
+    note.type = 'triangle';
+    note.frequency.value = frequency;
+    note.connect(volume).connect(celebrationAudio.destination);
+    volume.gain.setValueAtTime(0.001, start);
+    volume.gain.exponentialRampToValueAtTime(0.085, start + 0.025);
+    volume.gain.exponentialRampToValueAtTime(0.001, start + duration);
+    note.start(start);
+    note.stop(start + duration);
+  }
 }
 
 function flashDot(m, color) {
@@ -483,9 +517,25 @@ function renderLobby() {
         <label>Hints <select id="lb_diff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard (no hints)</option></select></label>
       </div>
       <button class="btn full" onclick="startFromLobby()">Start puzzle</button>
+      <div class="lrow"><label>Online mode
+        <select id="lb_online_mode">
+          <option value="cooperative" ${onlineMode === 'cooperative' ? 'selected' : ''}>Cooperative</option>
+          <option value="competitive" ${onlineMode === 'competitive' ? 'selected' : ''}>Competitive</option>
+        </select></label>
+      </div>
       <button class="btn ghost full" type="button" onclick="inviteFriend()">Invite friends online</button>
-      <p class="hint">Online tables use gallery pictures. Uploaded pictures stay on your device.</p>
+      <p class="hint" id="online-mode-hint"></p>
     </div>`;
+  document.getElementById('lb_online_mode').onchange = event => {
+    onlineMode = event.target.value;
+    showOnlineModeHint();
+  };
+  showOnlineModeHint();
+}
+function showOnlineModeHint() {
+  document.getElementById('online-mode-hint').textContent = onlineMode === 'competitive'
+    ? '2–4 players. Everyone plays at once. Whoever places the most pieces wins. Choose a gallery picture.'
+    : '2–4 players. Everyone builds the same puzzle at once. Finish it together. Choose a gallery picture.';
 }
 function cycleAvatar(i) { seats[i].avatar = AVATARS[(AVATARS.indexOf(seats[i].avatar) + 1) % AVATARS.length]; renderLobby(); }
 function cycleColor(i) { seats[i].colorIdx = nextFreeColor(i); renderLobby(); }
@@ -496,7 +546,6 @@ function startFromLobby() {
   const chosen = mode === 'solo' ? [seats[0]] : seats.filter(s => s.active);
   players = chosen.map(s => ({ name: (s.name || '').trim() || PCOLOR_NAMES[s.colorIdx], color: PCOLORS[s.colorIdx], avatar: s.avatar, score: 0 }));
   if (!players.length) players = [{ name: 'You', color: PCOLORS[0], avatar: AVATARS[0], score: 0 }];
-  cur = 0;
   currentPicVal = document.getElementById('lb_img').value;
   currentPieceTarget = +document.getElementById('lb_pieces').value;
   difficulty = document.getElementById('lb_diff').value;
@@ -514,7 +563,7 @@ function saveState() {
     const data = {
       v: 1, seed, picVal: currentPicVal, uploadSrc: currentPicVal === 'upload' ? uploadSrc : null,
       pieces: currentPieceTarget, difficulty, mode, outlinesOn,
-      players, cur, total: puzzle.pieces.length,
+      players, total: puzzle.pieces.length,
       placed: puzzle.pieces.filter(m => m.userData.placed).map(m => m.userData.id),
       done: placed === puzzle.pieces.length, when: Date.now(),
     };
@@ -527,7 +576,6 @@ function continueGame() {
   seed = s.seed; currentPicVal = s.picVal; currentPieceTarget = s.pieces;
   difficulty = s.difficulty; mode = s.mode || 'solo'; outlinesOn = s.outlinesOn !== false && difficulty !== 'hard';
   players = s.players && s.players.length ? s.players : [{ name: 'You', color: PCOLORS[0], avatar: AVATARS[0], score: 0 }];
-  cur = s.cur || 0;
   if (s.picVal === 'upload') uploadSrc = s.uploadSrc;
   document.getElementById('lobby').classList.add('hide');
   const src = s.picVal === 'upload' ? s.uploadSrc : IMAGES[+s.picVal].file;
@@ -579,34 +627,9 @@ function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = i
 addEventListener('resize', resize);
 function tick() {
   requestAnimationFrame(tick);
-  if (puzzle) for (const m of puzzle.pieces) {
-    const a = m.userData.anim; if (!a) continue;
-    a.t = Math.min(1, a.t + 0.028);
-    const e = a.t * a.t * (3 - 2 * a.t);
-    m.position.lerpVectors(a.from, m.userData.home, e);
-    m.rotation.y = a.angle * (1 - e);
-    m.position.y = a.from.y * (1 - e) + Math.sin(e * Math.PI) * 1.6;   // lift-and-drop arc
-    if (a.t >= 1) {
-      delete m.userData.anim;
-      placePiece(m);
-    }
-  }
   controls.update(); renderer.render(scene, camera);
 }
-// ── demo autoplay + canvas recorder, used to capture real gameplay for the promo ──
-window.pzAutoPlay = function (opts) {
-  if (friends.online) return;
-  opts = opts || {}; if (!puzzle) return;
-  const order = puzzle.pieces.filter(m => !m.userData.placed).sort(() => Math.random() - 0.5);
-  const n = opts.count ? Math.min(opts.count, order.length) : order.length;
-  let i = 0; const stagger = opts.stagger || 300;
-  (function step() {
-    if (i >= n) return;
-    const piece = order[i++];
-    piece.userData.anim = { from: piece.position.clone(), angle: wrapAngle(piece.rotation.y), t: 0 };
-    setTimeout(step, stagger);
-  })();
-};
+// Canvas recorder used to capture gameplay for the promo.
 let _rec = null, _chunks = [];
 window.pzRecordStart = function (fps) {
   const stream = canvas.captureStream(fps || 30); _chunks = [];
@@ -624,31 +647,36 @@ window.pzRecordStop = function () {
   });
 };
 
-let friendSeat = 0, friendState, friendMoves = 0, friendReady = false;
+let friendState, friendMoves = 0, friendReady = false;
 function applyFriendMoves() {
   const pending = friendState.moves.slice(friendMoves);
-  for (const id of pending) {
+  for (const [index, id] of pending.entries()) {
     const piece = puzzle.pieces[id];
-    if (piece) placePiece(piece, pending.length > 1);
+    if (piece && !piece.userData.placed) {
+      const owner = friendState.owners?.[friendMoves + index] ?? 0;
+      placePiece(piece, owner, pending.length > 1);
+    }
   }
   friendMoves = friendState.moves.length;
-  if (placed < puzzle.pieces.length) showTurn();
+  if (placed < puzzle.pieces.length) showProgress();
 }
 const friends = friendTable({
   settings() {
     const picture = document.getElementById('lb_img').value;
     if (picture === 'upload') { alert('Choose a gallery picture for an online table.'); return null; }
     return { image: Number(picture), pieces: Number(document.getElementById('lb_pieces').value),
-      difficulty: document.getElementById('lb_diff').value, name: seats[0].name };
+      difficulty: document.getElementById('lb_diff').value, name: seats[0].name, mode: onlineMode };
   },
   status: setMsg,
-  update(state, you) {
+  update(state) {
     const first = !friendState;
     friendState = state;
     if (first) {
-      friendSeat = state.players.findIndex(player => player.user_id === you);
-      players = state.players.map((player, i) => ({ name: player.username, score: 0, color: PCOLORS[i], avatar: AVATARS[i] }));
-      cur = 0;
+      players = state.players.map((player, i) => ({
+        name: state.players.some((other, j) => j !== i && other.username === player.username)
+          ? `${player.username} (seat ${i + 1})` : player.username,
+        score: 0, color: PCOLORS[i], avatar: AVATARS[i],
+      }));
       seed = state.options.seed;
       difficulty = state.options.difficulty;
       outlinesOn = difficulty !== 'hard';

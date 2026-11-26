@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Puzzle Maker</title>
+<meta name="description" content="Turn a gallery picture or your own image into a 3D jigsaw puzzle, from 20 to 1,000 pieces.">
+<meta property="og:title" content="Puzzle Maker — ButterflyFx Games">
+<meta property="og:description" content="Your pictures. Your puzzle. Play a 3D jigsaw alone or with friends on the same screen.">
+<meta property="og:image" content="https://playbutterflyfx.com/puzzle-maker-promo.png">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root{--accent:#ffcf6b;--panel:rgba(22,18,30,0.82);--dim:#d9cfe8}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:#0a0710;font-family:"Segoe UI",system-ui,Arial,sans-serif;color:#fff}
+  #cv{display:block;width:100vw;height:100vh;touch-action:none}
+  .overlay{position:fixed;left:0;right:0;pointer-events:none}
+  .top{top:0;padding:10px;display:flex;flex-direction:column;align-items:center;gap:6px}
+  h1{margin:0;font-size:20px;color:var(--accent);text-shadow:0 2px 6px #000}
+  #msg{font-weight:700;font-size:14px;text-shadow:0 2px 6px #000;min-height:18px}
+  .bar{position:fixed;bottom:0;left:0;right:0;padding:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+  .bar>*{pointer-events:auto}
+  .btn{background:var(--accent);color:#1a130b;border:0;border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer;font-size:13px}
+  .btn.ghost{background:var(--panel);color:var(--dim);border:1px solid rgba(255,255,255,0.18)}
+  select,label{font-size:12px;color:var(--dim)}
+  select{background:var(--panel);color:#fff;border:1px solid rgba(255,255,255,0.18);border-radius:7px;padding:6px 8px}
+  .players{position:fixed;top:10px;right:12px;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+  .pcard{background:var(--panel);border:1px solid rgba(255,255,255,0.14);border-radius:10px;padding:6px 12px;min-width:120px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .pcard.on{outline:2px solid var(--accent)}
+  .pcard .nm{font-weight:700;font-size:13px}.pcard .sc{font-size:20px;font-weight:700;color:var(--accent)}
+  .pcard .av{font-size:15px;margin-right:3px}
+  .pcard .dot{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin-right:5px}
+  /* lobby */
+  #lobby{position:fixed;inset:0;background:rgba(8,5,16,0.85);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;z-index:10;pointer-events:auto;padding:16px;overflow:auto}
+  #lobby.hide{display:none}
+  .card{background:#16111f;border:1px solid rgba(255,255,255,0.12);border-radius:16px;max-width:470px;width:100%;padding:20px;box-shadow:0 20px 60px #000}
+  .card h2{margin:0 0 4px;color:var(--accent);font-size:24px;text-align:center}
+  .card .tag{margin:0 0 12px;text-align:center;color:var(--dim);font-size:12.5px;line-height:1.4}
+  .modebtns{display:flex;gap:8px;justify-content:center;margin:6px 0 12px}
+  .modebtns button{flex:1;padding:9px;border-radius:9px;border:1px solid rgba(255,255,255,0.18);background:#0e0a18;color:var(--dim);font-weight:700;cursor:pointer;font-size:13px}
+  .modebtns button.sel{background:var(--accent);color:#1a130b;border-color:var(--accent)}
+  .seat{display:flex;align-items:center;gap:10px;background:#1c1630;border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:8px 10px;margin:7px 0}
+  .seat.off{opacity:0.45}
+  .av2{font-size:24px;background:#0e0a18;border:1px solid rgba(255,255,255,0.14);border-radius:10px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none}
+  .sw{width:24px;height:24px;border-radius:50%;cursor:pointer;border:2px solid rgba(255,255,255,0.25);flex:0 0 auto}
+  .nameinput{flex:1;min-width:0;background:#0e0a18;border:1px solid rgba(255,255,255,0.16);border-radius:8px;color:#fff;padding:7px 9px;font-weight:700;font-size:14px;font-family:inherit}
+  .nameinput::placeholder{color:#8a7fa0;font-weight:400}
+  .onoff{font-size:12px;padding:5px 9px;border-radius:7px;border:1px solid rgba(255,255,255,0.18);background:#0e0a18;color:var(--dim);cursor:pointer;font-weight:700}
+  .onoff.sel{background:var(--accent);color:#1a130b;border-color:var(--accent)}
+  .lrow{display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap;margin:10px 0 4px}
+  .btn.full{width:100%;font-size:16px;padding:12px;margin-top:8px}
+  .hint{text-align:center;color:var(--dim);font-size:12px;margin-top:9px}
+</style>
+</head>
+<body>
+  <canvas id="cv"></canvas>
+  <div class="overlay top">
+    <h1>Puzzle Maker</h1>
+    <div id="msg">Loading puzzle...</div>
+  </div>
+  <div class="players" id="players"></div>
+  <div class="bar">
+    <button class="btn" onclick="openLobby()">New puzzle</button>
+    <button class="btn ghost" onclick="toggleOutlines()">Outlines: on</button>
+    <button class="btn ghost" onclick="solveHint()">Shuffle tray</button>
+  </div>
+  <div id="lobby"></div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const IMAGES = [
+  { file: 'images/bringing-in-the-herd.jpg', name: 'Bringing in the Herd' },
+  { file: 'images/tropical-sunset.png', name: 'Tropical Sunset' },
+  { file: 'images/lighthouse.jpg', name: 'Lighthouse' },
+  { file: 'images/castle.jpg', name: 'Castle' },
+  { file: 'images/delicate-arch.jpg', name: 'Delicate Arch' },
+  { file: 'images/goblin-valley-utah.jpg', name: 'Goblin Valley' },
+  { file: 'images/parrot.jpg', name: 'Parrot' },
+  { file: 'images/dragon.jpg', name: 'Dragon' },
+  { file: 'images/phoenix-rising.png', name: 'Phoenix Rising' },
+  { file: 'images/steam-train.jpg', name: 'Steam Train' },
+  { file: 'images/union-station.jpg', name: 'Union Station' },
+  { file: 'images/edmund-fitzgerald.jpg', name: 'Edmund Fitzgerald' },
+  { file: 'images/moose.jpg', name: 'Moose' },
+  { file: 'images/christmas-village.png', name: 'Christmas Village' },
+  { file: 'images/fruit-basket.jpg', name: 'Fruit Basket' },
+  { file: 'images/cherries.jpg', name: 'Cherries' },
+  { file: 'images/the-schwarz-diamond.jpg', name: 'The Schwarz Diamond' },
+];
+
+const canvas = document.getElementById('cv');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0712);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 400);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true; controls.dampingFactor = 0.08; controls.minDistance = 3; controls.maxDistance = 400;
+controls.maxPolarAngle = Math.PI * 0.49; controls.target.set(0, 0, 0);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const key = new THREE.DirectionalLight(0xfff0e0, 1.1); key.position.set(10, 20, 8);
+key.castShadow = true; key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = -20; key.shadow.camera.right = 20; key.shadow.camera.top = 20; key.shadow.camera.bottom = -20;
+scene.add(key);
+scene.add(new THREE.DirectionalLight(0x8899ff, 0.25).translateX(-12).translateY(8));
+// soft starfield so the void is not flat
+(function stars() {
+  const n = 1400, pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { const r = 80 + Math.random() * 120, th = Math.random() * 6.28, ph = Math.acos(2 * Math.random() - 1); pos[i*3]=r*Math.sin(ph)*Math.cos(th); pos[i*3+1]=r*Math.sin(ph)*Math.sin(th); pos[i*3+2]=r*Math.cos(ph); }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0x8a7fb0, size: 0.5, sizeAttenuation: true })));
+})();
+
+let BOARD_W = 16, BOARD_D = 12;     // playing board size; grows with piece count so big puzzles are something to zoom around
+const THK = 0.35;                   // piece thickness
+let texture = null, imgAspect = 1.5;
+let puzzle = null;                  // { pieces:[...], group:Group, boardGroup, cols, rows }
+let outlinesOn = true;
+let placed = 0;
+const AVATARS = ['\u{1F98A}','\u{1F43C}','\u{1F438}','\u{1F981}','\u{1F428}','\u{1F435}','\u{1F419}','\u{1F989}','\u{1F432}','\u{1F984}','\u{1F422}','\u{1F437}'];
+const PCOLORS = [0xe0533b, 0x3ad46a, 0x4d9be8, 0xf2c200];
+const PCOLOR_NAMES = ['Red', 'Green', 'Blue', 'Gold'];
+let seats = [], players = [], cur = 0, mode = 'solo', difficulty = 'normal';
+let uploadSrc = null, uploadName = '';
+let seed = 0, rng = Math.random, currentPicVal = '0', currentPieceTarget = 100;
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+const texLoader = new THREE.TextureLoader();
+const raycaster = new THREE.Raycaster(); const ndc = new THREE.Vector2();
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+
+// ── jigsaw edge: a straight segment A->B with an optional knob (classic tab) ──
+function knob(t) { if (t < 0.34 || t > 0.66) return 0; return Math.sin((t - 0.34) / 0.32 * Math.PI); }
+function edgeCurve(ax, ay, bx, by, sign, tab, n) {
+  const pts = [], dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1;
+  const px = -dy / len, py = dx / len;   // left-perpendicular unit
+  for (let i = 0; i <= n; i++) {
+    const t = i / n, x = ax + dx * t, y = ay + dy * t, k = sign ? knob(t) * sign * tab : 0;
+    pts.push([x + px * k, y + py * k]);
+  }
+  return pts;
+}
+
+// ── build the puzzle from the loaded texture ──
+function buildPuzzle(pieceTarget, restore) {
+  if (puzzle) { scene.remove(puzzle.group); scene.remove(puzzle.boardGroup); scene.remove(puzzle.refGroup); disposeGroup(puzzle.group); }
+  placed = 0;
+  rng = mulberry32(seed || 1);   // seeded so the exact same puzzle regenerates on resume
+  // choose a grid near the target piece count that respects the image aspect
+  let cols = Math.max(2, Math.round(Math.sqrt(pieceTarget * imgAspect)));
+  let rows = Math.max(2, Math.round(pieceTarget / cols));
+  // bigger counts -> bigger board (each piece stays ~the same size), something to zoom around
+  BOARD_W = cols * 1.7;
+  BOARD_D = BOARD_W / imgAspect;
+  const big = cols * rows > 120;               // large puzzles: lighter geometry, no per-piece shadows
+  const samples = big ? 10 : 22;
+  const lineU = gridLines(cols), lineV = gridLines(rows);
+  const tab = Math.min(1 / cols, 1 / rows) * 0.27;   // knob size in uv units
+
+  // one curve per internal edge, shared by both neighbours so they interlock
+  const hEdge = {}, vEdge = {};   // hEdge[r][c] horizontal line v=lineV[r]; vEdge[c][r] vertical line u=lineU[c]
+  for (let r = 1; r < rows; r++) for (let c = 0; c < cols; c++)
+    (hEdge[r] = hEdge[r] || {})[c] = edgeCurve(lineU[c], lineV[r], lineU[c + 1], lineV[r], rng() < 0.5 ? 1 : -1, tab, samples);
+  for (let c = 1; c < cols; c++) for (let r = 0; r < rows; r++)
+    (vEdge[c] = vEdge[c] || {})[r] = edgeCurve(lineU[c], lineV[r], lineU[c], lineV[r + 1], rng() < 0.5 ? 1 : -1, tab, samples);
+
+  const group = new THREE.Group(), boardGroup = new THREE.Group();
+  const imgMat = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.75, metalness: 0.02 });
+  const sideMat = new THREE.MeshStandardMaterial({ color: 0xcab9a7, roughness: 0.9 });
+  const pieces = [];
+
+  // playing board slab
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(BOARD_W + 1.2, 0.5, BOARD_D + 1.2),
+    new THREE.MeshStandardMaterial({ color: 0x241c33, roughness: 0.85 }));
+  slab.position.y = -0.3; slab.receiveShadow = true; boardGroup.add(slab);
+
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    // outline in uv space, CCW: bottom, right, top, left
+    const U0 = lineU[c], U1 = lineU[c + 1], V0 = lineV[r], V1 = lineV[r + 1];
+    let ring = [];
+    const push = (arr, rev) => { const a = rev ? arr.slice().reverse() : arr; for (let i = (ring.length ? 1 : 0); i < a.length; i++) ring.push(a[i]); };
+    push(r === 0 ? [[U0, V0], [U1, V0]] : hEdge[r][c], false);                    // bottom
+    push(c + 1 === cols ? [[U1, V0], [U1, V1]] : vEdge[c + 1][r], false);         // right
+    push(r + 1 === rows ? [[U1, V1], [U0, V1]] : hEdge[r + 1][c], true);          // top (reverse L->R)
+    push(c === 0 ? [[U0, V1], [U0, V0]] : vEdge[c][r], true);                     // left (reverse bottom->top)
+
+    // THREE.Shape in world ground coords: X = (u-0.5)*BOARD_W, Y(shape) = (v-0.5)*BOARD_D
+    const shape = new THREE.Shape();
+    ring.forEach((p, i) => { const x = (p[0] - 0.5) * BOARD_W, y = (p[1] - 0.5) * BOARD_D; i ? shape.lineTo(x, y) : shape.moveTo(x, y); });
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: THK, bevelEnabled: false, steps: 1, UVGenerator: uvGen() });
+    geo.rotateX(-Math.PI / 2);   // lay flat: shape XY -> world XZ, thickness -> +Y
+    const mesh = new THREE.Mesh(geo, [imgMat, sideMat]);
+    mesh.castShadow = !big; mesh.receiveShadow = true;
+    // home (correct) position is baked into the shape, so home = origin
+    const cu = (U0 + U1) / 2, cv = (V0 + V1) / 2;
+    const home = new THREE.Vector3(0, 0, 0);
+    mesh.userData = { id: r * cols + c, home, cu, cv, placed: false };
+    group.add(mesh);
+    pieces.push(mesh);
+
+    // slot outline on the board (dark line loop of the piece ring at home)
+    const linePts = ring.map(p => new THREE.Vector3((p[0] - 0.5) * BOARD_W, 0.02, -(p[1] - 0.5) * BOARD_D));
+    linePts.push(linePts[0].clone());
+    const lineGeo = new THREE.BufferGeometry().setFromPoints(linePts);
+    const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0x6b5f88, transparent: true, opacity: 0.7 }));
+    boardGroup.add(line);
+  }
+
+  // crisp straight boundary around the whole play area (so the outer edges read perfectly straight)
+  const B = [
+    new THREE.Vector3(-BOARD_W / 2, 0.035, -BOARD_D / 2), new THREE.Vector3(BOARD_W / 2, 0.035, -BOARD_D / 2),
+    new THREE.Vector3(BOARD_W / 2, 0.035, BOARD_D / 2), new THREE.Vector3(-BOARD_W / 2, 0.035, BOARD_D / 2),
+    new THREE.Vector3(-BOARD_W / 2, 0.035, -BOARD_D / 2),
+  ];
+  boardGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(B), new THREE.LineBasicMaterial({ color: 0xffcf6b, transparent: true, opacity: 0.85 })));
+
+  // reference panel: the full image standing behind the board, framed
+  const refGroup = new THREE.Group();
+  const panelW = BOARD_W * 0.6, panelH = panelW / imgAspect;
+  const panel = new THREE.Mesh(new THREE.PlaneGeometry(panelW, panelH), new THREE.MeshBasicMaterial({ map: texture }));
+  const frame = new THREE.Mesh(new THREE.PlaneGeometry(panelW + 0.5, panelH + 0.5), new THREE.MeshBasicMaterial({ color: 0x3a2f55 }));
+  panel.position.z = 0.01; refGroup.add(frame); refGroup.add(panel);
+  refGroup.position.set(0, panelH / 2 + 1.5, -BOARD_D / 2 - 2.5);
+  refGroup.userData.default = refGroup.position.clone();
+
+  scene.add(group); scene.add(boardGroup); scene.add(refGroup);
+  puzzle = { pieces, group, boardGroup, refGroup, cols, rows };
+  scatter();
+  setOutlines(outlinesOn);
+  // resume: snap the already-placed pieces home and fuse them (scores/players set by the caller)
+  if (restore && restore.placed) {
+    const byId = {}; puzzle.pieces.forEach(m => byId[m.userData.id] = m);
+    for (const id of restore.placed) { const m = byId[id]; if (m) { m.position.set(0, 0, 0); m.rotation.y = 0; m.userData.placed = true; } }
+    placed = restore.placed.length;
+  }
+  renderScoreboard();
+  if (restore && restore.placed) setMsg(players.length > 1 ? (players[cur].name + "'s turn — continue the puzzle. " + placed + ' / ' + puzzle.pieces.length) : ('Resumed — ' + placed + ' / ' + puzzle.pieces.length + ' placed.'));
+  else setMsg(players.length > 1 ? (players[cur].name + "'s turn — drag a piece to its spot.") : 'Drag a piece to its spot. Match the picture above.');
+  saveState();
+}
+
+function uvGen() {
+  const f = (vx, vy) => new THREE.Vector2(vx / BOARD_W + 0.5, vy / BOARD_D + 0.5);
+  return {
+    generateTopUV: (g, v, a, b, c) => [f(v[a * 3], v[a * 3 + 1]), f(v[b * 3], v[b * 3 + 1]), f(v[c * 3], v[c * 3 + 1])],
+    generateSideWallUV: () => { const z = new THREE.Vector2(0, 0); return [z, z, z, z]; },
+  };
+}
+
+// jittered internal grid lines on [0,1]; borders stay at 0 and 1
+function gridLines(n) {
+  const a = [0];
+  for (let i = 1; i < n; i++) a.push(i / n + (rng() - 0.5) * (1 / n) * 0.4);
+  a.push(1); return a;
+}
+
+// scatter unplaced pieces into a tray ring around the board
+function scatter() {
+  for (const m of puzzle.pieces) {
+    if (m.userData.placed) continue;
+    const side = Math.random();
+    let x, z;
+    if (side < 0.5) { x = (Math.random() - 0.5) * (BOARD_W + 10); z = BOARD_D / 2 + 2.5 + Math.random() * 5; }
+    else { x = (Math.random() < 0.5 ? -1 : 1) * (BOARD_W / 2 + 2.5 + Math.random() * 5); z = (Math.random() - 0.5) * (BOARD_D + 6); }
+    m.position.set(x - m.userData.home.x, 0.15 + Math.random() * 0.1, z - (-m.userData.home.z));
+    m.rotation.y = 0;
+  }
+}
+
+function setOutlines(on) {
+  outlinesOn = on;
+  puzzle.boardGroup.traverse(o => { if (o.isLine) o.visible = on; });
+  const btn = [...document.querySelectorAll('.btn')].find(b => b.textContent.startsWith('Outlines'));
+  if (btn) btn.textContent = 'Outlines: ' + (on ? 'on' : 'off');
+}
+
+function disposeGroup(g) { g.traverse(o => { if (o.geometry) o.geometry.dispose(); }); }
+function renderScoreboard() {
+  const el = document.getElementById('players');
+  if (!players.length) { el.innerHTML = ''; return; }
+  if (players.length === 1) { el.innerHTML = `<div class="pcard"><div class="nm">Pieces</div><div class="sc">${players[0].score}${puzzle ? ' / ' + puzzle.pieces.length : ''}</div></div>`; return; }
+  el.innerHTML = players.map((p, i) => `<div class="pcard ${i === cur ? 'on' : ''}"><div class="nm"><span class="av">${p.avatar}</span><span class="dot" style="background:#${p.color.toString(16).padStart(6, '0')}"></span>${p.name}</div><div class="sc">${p.score}</div></div>`).join('');
+}
+function setMsg(t) { document.getElementById('msg').textContent = t; }
+
+// ── picking / dragging ──
+let dragging = null, dragOffset = new THREE.Vector3();
+function ndcFrom(ev) { const r = canvas.getBoundingClientRect(); ndc.x = ((ev.clientX - r.left) / r.width) * 2 - 1; ndc.y = -((ev.clientY - r.top) / r.height) * 2 + 1; }
+function groundPoint(ev) { ndcFrom(ev); raycaster.setFromCamera(ndc, camera); const p = new THREE.Vector3(); raycaster.ray.intersectPlane(groundPlane, p); return p; }
+
+canvas.addEventListener('pointerdown', (ev) => {
+  if (!puzzle) return;
+  ndcFrom(ev); raycaster.setFromCamera(ndc, camera);
+  const hits = raycaster.intersectObjects(puzzle.pieces.filter(m => !m.userData.placed), false);
+  if (!hits.length) return;
+  dragging = hits[0].object; controls.enabled = false;
+  const gp = groundPoint(ev); dragOffset.copy(dragging.position).sub(new THREE.Vector3(gp.x, dragging.position.y, gp.z));
+  dragging.position.y = 1.2;
+});
+addEventListener('pointermove', (ev) => {
+  if (!dragging) return;
+  const gp = groundPoint(ev); dragging.position.x = gp.x + dragOffset.x; dragging.position.z = gp.z + dragOffset.z;
+});
+addEventListener('pointerup', () => {
+  if (!dragging) return;
+  const m = dragging; dragging = null; controls.enabled = true;
+  tryPlace(m);
+});
+
+// a piece is correct if its centre is near its home slot centre
+function tryPlace(m) {
+  const dist = Math.hypot(m.position.x, m.position.z);   // home is baked at origin
+  const near = Math.max(BOARD_W, BOARD_D) * 0.055;
+  if (dist < near) {
+    m.position.set(0, 0, 0); m.rotation.y = 0;           // correct: fuse to board, permanent
+    m.userData.placed = true; placed++;
+    if (players[cur]) players[cur].score++;
+    if (difficulty !== 'hard') flashDot(m, 0x3ad46a);    // green
+    renderScoreboard(); saveState();
+    if (placed === puzzle.pieces.length) { endGame(); return; }
+    if (players.length > 1) { cur = (cur + 1) % players.length; renderScoreboard(); setMsg(players[cur].name + "'s turn — drag a piece to its spot."); }
+    else setMsg('Placed! ' + placed + ' / ' + puzzle.pieces.length);
+  } else if (dist < near * 2.4) {
+    if (difficulty !== 'hard') flashDot(m, 0xf2c200);    // yellow = close
+    setMsg('Close. Nudge it onto its spot.');
+    m.position.y = 0.2;
+  } else {
+    if (difficulty !== 'hard') flashDot(m, 0xe0533b);    // red = wrong, stays liftable
+    setMsg(players.length > 1 ? (players[cur].name + ': not there — try again.') : 'Not there. Try another spot.');
+    m.position.y = 0.2;
+  }
+}
+function endGame() {
+  if (players.length > 1) {
+    const best = Math.max(...players.map(p => p.score));
+    const w = players.filter(p => p.score === best).map(p => p.name);
+    setMsg(w.length === 1 ? ('Complete! ' + w[0] + ' wins with ' + best + ' pieces.') : ('Complete! Tie at ' + best + ': ' + w.join(', ')));
+  } else setMsg('Puzzle complete! ' + placed + ' pieces.');
+}
+
+function flashDot(m, color) {
+  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 12), new THREE.MeshBasicMaterial({ color }));
+  dot.position.copy(m.position); dot.position.y += 1.2; scene.add(dot);
+  let life = 40; (function fade() { if (life-- <= 0) { scene.remove(dot); dot.geometry.dispose(); return; } dot.position.y += 0.02; requestAnimationFrame(fade); })();
+}
+
+// ── lobby ──
+function defaultSeats() {
+  return [
+    { active: true, avatar: AVATARS[0], colorIdx: 0, name: '' },
+    { active: false, avatar: AVATARS[1], colorIdx: 1, name: '' },
+    { active: false, avatar: AVATARS[2], colorIdx: 2, name: '' },
+    { active: false, avatar: AVATARS[3], colorIdx: 3, name: '' },
+  ];
+}
+function openLobby() { if (!seats.length) seats = defaultSeats(); renderLobby(); document.getElementById('lobby').classList.remove('hide'); }
+function usedColor(idx, ex) { return seats.some((s, i) => i !== ex && s.active && s.colorIdx === idx); }
+function nextFreeColor(i) { let idx = seats[i].colorIdx; for (let k = 0; k < 4; k++) { idx = (idx + 1) % 4; if (!usedColor(idx, i)) break; } return idx; }
+function escAttr(s) { return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function setMode(m) { mode = m; if (m === 'solo') { seats.forEach((s, i) => s.active = i === 0); } else { seats[0].active = true; if (!seats.some((s, i) => i > 0 && s.active)) seats[1].active = true; } renderLobby(); }
+function renderLobby() {
+  const picOpts = IMAGES.map((im, i) => `<option value="${i}">${escAttr(im.name)}</option>`).join('') + (uploadSrc ? `<option value="upload" selected>${escAttr(uploadName)} (uploaded)</option>` : '');
+  const seatHTML = mode !== 'solo' ? seats.map((s, i) => `
+    <div class="seat ${s.active ? '' : 'off'}">
+      <div class="av2" onclick="cycleAvatar(${i})">${s.avatar}</div>
+      <div class="sw" style="background:#${PCOLORS[s.colorIdx].toString(16).padStart(6, '0')}" onclick="cycleColor(${i})" title="${PCOLOR_NAMES[s.colorIdx]}"></div>
+      <input class="nameinput" value="${escAttr(s.name)}" maxlength="14" placeholder="${i === 0 ? 'Your name' : 'Player ' + (i + 1)}" oninput="setName(${i},this.value)" ${s.active ? '' : 'disabled'}>
+      ${i >= 1 ? `<button class="onoff ${s.active ? 'sel' : ''}" onclick="toggleSeat(${i})">${s.active ? 'In' : 'Off'}</button>` : ''}
+    </div>`).join('') : '';
+  const sv = loadState();
+  const contHTML = (sv && !sv.done && Array.isArray(sv.placed) && sv.placed.length) ? `<button class="btn full" style="margin-top:0" onclick="continueGame()">Continue last puzzle  (${sv.placed.length}/${sv.total || sv.pieces} placed)</button>` : '';
+  document.getElementById('lobby').innerHTML = `
+    <div class="card">
+      <h2>Puzzle Maker</h2>
+      <p class="tag">Build the picture from its pieces. Drag a piece to its spot: green fuses it, yellow is close, red is wrong (lift it and retry).</p>
+      ${contHTML}
+      <div class="modebtns">
+        <button class="${mode === 'solo' ? 'sel' : ''}" onclick="setMode('solo')">Solo</button>
+        <button class="${mode === 'local' ? 'sel' : ''}" onclick="setMode('local')">Friends (same screen)</button>
+      </div>
+      ${seatHTML}
+      <div class="lrow">
+        <label>Picture <select id="lb_img">${picOpts}</select></label>
+        <label>Upload <input id="lb_file" type="file" accept="image/*" onchange="onUpload(event)" style="max-width:140px;color:var(--dim);font-size:11px"></label>
+      </div>
+      <div class="lrow">
+        <label>Pieces <select id="lb_pieces">
+          <option value="20">20</option><option value="50">50</option><option value="100" selected>100</option>
+          <option value="250">250</option><option value="500">500</option><option value="1000">1000</option>
+        </select></label>
+        <label>Hints <select id="lb_diff"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard (no hints)</option></select></label>
+      </div>
+      <button class="btn full" onclick="startFromLobby()">Start puzzle</button>
+      <button class="btn ghost full" type="button" disabled>Online play coming soon</button>
+      <p class="hint">Play solo or take turns on the same screen. Online tables are not connected yet.</p>
+    </div>`;
+}
+function cycleAvatar(i) { seats[i].avatar = AVATARS[(AVATARS.indexOf(seats[i].avatar) + 1) % AVATARS.length]; renderLobby(); }
+function cycleColor(i) { seats[i].colorIdx = nextFreeColor(i); renderLobby(); }
+function toggleSeat(i) { seats[i].active = !seats[i].active; if (seats[i].active && usedColor(seats[i].colorIdx, i)) seats[i].colorIdx = nextFreeColor(i); renderLobby(); }
+function setName(i, v) { seats[i].name = v; }
+function onUpload(ev) { const f = ev.target.files && ev.target.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { uploadSrc = rd.result; uploadName = f.name.replace(/\.[^.]+$/, ''); renderLobby(); }; rd.readAsDataURL(f); }
+function startFromLobby() {
+  const chosen = mode === 'solo' ? [seats[0]] : seats.filter(s => s.active);
+  players = chosen.map(s => ({ name: (s.name || '').trim() || PCOLOR_NAMES[s.colorIdx], color: PCOLORS[s.colorIdx], avatar: s.avatar, score: 0 }));
+  if (!players.length) players = [{ name: 'You', color: PCOLORS[0], avatar: AVATARS[0], score: 0 }];
+  cur = 0;
+  currentPicVal = document.getElementById('lb_img').value;
+  currentPieceTarget = +document.getElementById('lb_pieces').value;
+  difficulty = document.getElementById('lb_diff').value;
+  outlinesOn = difficulty !== 'hard';
+  seed = (Math.random() * 1e9) | 0;    // new puzzle = new seed
+  document.getElementById('lobby').classList.add('hide');
+  const src = currentPicVal === 'upload' ? uploadSrc : IMAGES[+currentPicVal].file;
+  loadSource(src, currentPieceTarget);
+}
+// ── save / resume (localStorage). The exact puzzle regenerates from its seed. ──
+const SAVE_KEY = 'pz_save';
+function saveState() {
+  if (!puzzle) return;
+  try {
+    const data = {
+      v: 1, seed, picVal: currentPicVal, uploadSrc: currentPicVal === 'upload' ? uploadSrc : null,
+      pieces: currentPieceTarget, difficulty, mode, outlinesOn,
+      players, cur, total: puzzle.pieces.length,
+      placed: puzzle.pieces.filter(m => m.userData.placed).map(m => m.userData.id),
+      done: placed === puzzle.pieces.length, when: Date.now(),
+    };
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  } catch (e) { /* quota (big uploaded image) or private mode: skip silently */ }
+}
+function loadState() { try { return JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); } catch (e) { return null; } }
+function continueGame() {
+  const s = loadState(); if (!s) return;
+  seed = s.seed; currentPicVal = s.picVal; currentPieceTarget = s.pieces;
+  difficulty = s.difficulty; mode = s.mode || 'solo'; outlinesOn = s.outlinesOn !== false && difficulty !== 'hard';
+  players = s.players && s.players.length ? s.players : [{ name: 'You', color: PCOLORS[0], avatar: AVATARS[0], score: 0 }];
+  cur = s.cur || 0;
+  if (s.picVal === 'upload') uploadSrc = s.uploadSrc;
+  document.getElementById('lobby').classList.add('hide');
+  const src = s.picVal === 'upload' ? s.uploadSrc : IMAGES[+s.picVal].file;
+  loadSource(src, s.pieces, s);
+}
+
+function loadSource(src, pieceCount, restore) {
+  setMsg('Loading...');
+  texLoader.load(src, (t) => {
+    t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+    texture = t; imgAspect = (t.image && t.image.width ? t.image.width / t.image.height : 1.4);
+    buildPuzzle(pieceCount || 100, restore);
+    resetView();
+  }, undefined, () => setMsg('Could not load that image.'));
+}
+
+function resetView() { const d = BOARD_D; camera.position.set(0, d * 0.78 + 8, d * 1.2 + 12); controls.target.set(0, 0, 0); controls.update(); }
+function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize);
+const ZERO = new THREE.Vector3(0, 0, 0);
+function tick() {
+  requestAnimationFrame(tick);
+  if (puzzle) for (const m of puzzle.pieces) {
+    const a = m.userData.anim; if (!a) continue;
+    a.t = Math.min(1, a.t + 0.028);
+    const e = a.t * a.t * (3 - 2 * a.t);
+    m.position.lerpVectors(a.from, ZERO, e);
+    m.position.y = a.from.y * (1 - e) + Math.sin(e * Math.PI) * 1.6;   // lift-and-drop arc
+    if (a.t >= 1) {
+      m.position.set(0, 0, 0); delete m.userData.anim; m.userData.placed = true; placed++;
+      if (players[cur]) players[cur].score++;
+      if (difficulty !== 'hard') flashDot(m, 0x3ad46a);
+      renderScoreboard(); saveState();
+      if (placed === puzzle.pieces.length) endGame();
+      else if (players.length > 1) cur = (cur + 1) % players.length;
+    }
+  }
+  controls.update(); renderer.render(scene, camera);
+}
+// ── demo autoplay + canvas recorder, used to capture real gameplay for the promo ──
+window.pzAutoPlay = function (opts) {
+  opts = opts || {}; if (!puzzle) return;
+  const order = puzzle.pieces.filter(m => !m.userData.placed).sort(() => Math.random() - 0.5);
+  const n = opts.count ? Math.min(opts.count, order.length) : order.length;
+  let i = 0; const stagger = opts.stagger || 300;
+  (function step() { if (i >= n) return; order[i++].userData.anim = { from: order[i - 1].position.clone(), t: 0 }; setTimeout(step, stagger); })();
+};
+let _rec = null, _chunks = [];
+window.pzRecordStart = function (fps) {
+  const stream = canvas.captureStream(fps || 30); _chunks = [];
+  _rec = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8', videoBitsPerSecond: 8000000 });
+  _rec.ondataavailable = e => { if (e.data && e.data.size) _chunks.push(e.data); };
+  _rec.start();
+};
+window.pzRecordStop = function () {
+  return new Promise(res => {
+    _rec.onstop = async () => {
+      const buf = new Uint8Array(await new Blob(_chunks, { type: 'video/webm' }).arrayBuffer());
+      let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+      res(btoa(bin));
+    }; _rec.stop();
+  });
+};
+
+window.openLobby = openLobby; window.startFromLobby = startFromLobby; window.setMode = setMode; window.continueGame = continueGame;
+window.cycleAvatar = cycleAvatar; window.cycleColor = cycleColor; window.toggleSeat = toggleSeat; window.setName = setName; window.onUpload = onUpload; window.inviteFriend = inviteFriend;
+window.toggleOutlines = () => setOutlines(!outlinesOn);
+window.solveHint = () => { if (puzzle) scatter(); };
+
+resize(); tick(); openLobby();
+</script>
+</body>
+</html>

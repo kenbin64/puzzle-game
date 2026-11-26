@@ -22,6 +22,7 @@
   .bar>*{pointer-events:auto}
   .btn{background:var(--accent);color:#1a130b;border:0;border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer;font-size:13px}
   .btn.ghost{background:var(--panel);color:var(--dim);border:1px solid rgba(255,255,255,0.18)}
+  .btn:disabled{opacity:.45;cursor:default}
   select,label{font-size:12px;color:var(--dim)}
   select{background:var(--panel);color:#fff;border:1px solid rgba(255,255,255,0.18);border-radius:7px;padding:6px 8px}
   .players{position:fixed;top:10px;right:12px;display:flex;flex-direction:column;gap:6px;pointer-events:none}
@@ -63,6 +64,8 @@
     <button class="btn" onclick="openLobby()">New puzzle</button>
     <button class="btn ghost" onclick="toggleOutlines()">Outlines: on</button>
     <button class="btn ghost" onclick="solveHint()">Shuffle tray</button>
+    <button class="btn ghost" id="rotate-left" aria-label="Rotate left 15 degrees" title="Rotate left (Q)" disabled>↶ 15°</button>
+    <button class="btn ghost" id="rotate-right" aria-label="Rotate right 15 degrees" title="Rotate right (E)" disabled>↷ 15°</button>
   </div>
   <div id="lobby"></div>
 
@@ -124,6 +127,8 @@ scene.add(new THREE.DirectionalLight(0x8899ff, 0.25).translateX(-12).translateY(
 
 let BOARD_W = 16, BOARD_D = 12;     // playing board size; grows with piece count so big puzzles are something to zoom around
 const THK = 0.35;                   // piece thickness
+const ROTATION_STEP = Math.PI / 12;
+const wrapAngle = angle => Math.atan2(Math.sin(angle), Math.cos(angle));
 let texture = null, imgAspect = 1.5;
 let puzzle = null;                  // { pieces:[...], group:Group, boardGroup, cols, rows }
 let outlinesOn = true;
@@ -154,6 +159,7 @@ function edgeCurve(ax, ay, bx, by, sign, tab, n) {
 
 // ── build the puzzle from the loaded texture ──
 function buildPuzzle(pieceTarget, restore, layout) {
+  selectPiece(null);
   if (puzzle) { scene.remove(puzzle.group); scene.remove(puzzle.boardGroup); scene.remove(puzzle.refGroup); disposeGroup(puzzle.group); }
   placed = 0;
   rng = mulberry32(seed || 1);   // seeded so the exact same puzzle regenerates on resume
@@ -202,10 +208,10 @@ function buildPuzzle(pieceTarget, restore, layout) {
     geo.rotateX(-Math.PI / 2);   // lay flat: shape XY -> world XZ, thickness -> +Y
     const mesh = new THREE.Mesh(geo, [imgMat, sideMat]);
     mesh.castShadow = !big; mesh.receiveShadow = true;
-    // home (correct) position is baked into the shape, so home = origin
-    const cu = (U0 + U1) / 2, cv = (V0 + V1) / 2;
-    const home = new THREE.Vector3(0, 0, 0);
-    mesh.userData = { id: r * cols + c, home, cu, cv, placed: false };
+    // Keep the board-space texture coordinates, but rotate around the piece's own centre.
+    const home = new THREE.Vector3(((U0 + U1) / 2 - 0.5) * BOARD_W, 0, (0.5 - (V0 + V1) / 2) * BOARD_D);
+    geo.translate(-home.x, 0, -home.z);
+    mesh.userData = { id: r * cols + c, home, placed: false };
     group.add(mesh);
     pieces.push(mesh);
 
@@ -241,7 +247,7 @@ function buildPuzzle(pieceTarget, restore, layout) {
   // resume: snap the already-placed pieces home and fuse them (scores/players set by the caller)
   if (restore && restore.placed) {
     const byId = {}; puzzle.pieces.forEach(m => byId[m.userData.id] = m);
-    for (const id of restore.placed) { const m = byId[id]; if (m) { m.position.set(0, 0, 0); m.rotation.y = 0; m.userData.placed = true; } }
+    for (const id of restore.placed) { const m = byId[id]; if (m) snapHome(m); }
     placed = restore.placed.length;
   }
   renderScoreboard();
@@ -265,17 +271,30 @@ function gridLines(n) {
   a.push(1); return a;
 }
 
-// scatter unplaced pieces into a tray ring around the board
+// Fill shuffled slots on three sides of the board, with room for the rotated pieces.
 function scatter() {
-  for (const m of puzzle.pieces) {
-    if (m.userData.placed) continue;
-    const side = Math.random();
-    let x, z;
-    if (side < 0.5) { x = (Math.random() - 0.5) * (BOARD_W + 10); z = BOARD_D / 2 + 2.5 + Math.random() * 5; }
-    else { x = (Math.random() < 0.5 ? -1 : 1) * (BOARD_W / 2 + 2.5 + Math.random() * 5); z = (Math.random() - 0.5) * (BOARD_D + 6); }
-    m.position.set(x - m.userData.home.x, 0.15 + Math.random() * 0.1, z - (-m.userData.home.z));
-    m.rotation.y = 0;
+  selectPiece(null);
+  const loose = puzzle.pieces.filter(piece => !piece.userData.placed);
+  const spacing = Math.hypot(BOARD_W / puzzle.cols, BOARD_D / puzzle.rows) * 1.85;
+  const half = Math.ceil((BOARD_W / 2 + 1) / spacing);
+  const depth = Math.ceil((BOARD_D / 2 + 1) / spacing);
+  const slots = [];
+  for (let ring = 1; slots.length < loose.length; ring++) {
+    const side = half + ring;
+    const front = depth + ring;
+    for (let z = -depth; z < front; z++) slots.push([-side, z], [side, z]);
+    for (let x = -side; x <= side; x++) slots.push([x, front]);
   }
+  const random = mulberry32(seed + (puzzle.shuffles = (puzzle.shuffles || 0) + 1));
+  for (let i = slots.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [slots[i], slots[j]] = [slots[j], slots[i]];
+  }
+  loose.forEach((piece, i) => {
+    const [x, z] = slots[i];
+    piece.position.set((x + (random() - 0.5) * 0.22) * spacing, 0.15, (z + (random() - 0.5) * 0.22) * spacing);
+    piece.rotation.y = Math.floor(random() * 24) * ROTATION_STEP;
+  });
 }
 
 function setOutlines(on) {
@@ -295,41 +314,86 @@ function renderScoreboard() {
 function setMsg(t) { document.getElementById('msg').textContent = t; }
 
 // ── picking / dragging ──
-let dragging = null, dragOffset = new THREE.Vector3();
+let dragging = null, selected = null, selectionOutline = null;
+const dragOffset = new THREE.Vector3();
+const rotationButtons = ['rotate-left', 'rotate-right'].map(id => document.getElementById(id));
+function canMovePiece() {
+  return !!puzzle && (!friends.online || (friends.connected && cur === friendSeat && friendReady));
+}
+function selectPiece(piece) {
+  if (selected === piece) return;
+  if (selectionOutline) {
+    selectionOutline.removeFromParent();
+    selectionOutline.geometry.dispose();
+    selectionOutline.material.dispose();
+    selectionOutline = null;
+  }
+  selected = piece;
+  for (const button of rotationButtons) button.disabled = !piece;
+  if (!piece) return;
+  selectionOutline = new THREE.LineSegments(new THREE.EdgesGeometry(piece.geometry), new THREE.LineBasicMaterial({ color: 0xffcf6b }));
+  selectionOutline.position.y = 0.025;
+  piece.add(selectionOutline);
+}
+function rotatePiece(direction) {
+  if (!selected || !canMovePiece() || !document.getElementById('lobby').classList.contains('hide')) return;
+  selected.rotation.y = wrapAngle(selected.rotation.y + direction * ROTATION_STEP);
+  if (!dragging && distanceToSlot(selected) <= snapDistance()) tryPlace(selected);
+}
+rotationButtons[0].onclick = () => rotatePiece(1);
+rotationButtons[1].onclick = () => rotatePiece(-1);
+addEventListener('keydown', event => {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.target.closest?.('input, select, textarea, dialog, [contenteditable]')) return;
+  const key = event.key.toLowerCase();
+  if (key === 'q' || key === 'e') rotatePiece(key === 'q' ? 1 : -1);
+});
 function ndcFrom(ev) { const r = canvas.getBoundingClientRect(); ndc.x = ((ev.clientX - r.left) / r.width) * 2 - 1; ndc.y = -((ev.clientY - r.top) / r.height) * 2 + 1; }
 function groundPoint(ev) { ndcFrom(ev); raycaster.setFromCamera(ndc, camera); const p = new THREE.Vector3(); raycaster.ray.intersectPlane(groundPlane, p); return p; }
 
 canvas.addEventListener('pointerdown', (ev) => {
-  if (!puzzle || (friends.online && (!friends.connected || cur !== friendSeat || !friendReady))) return;
+  if (!canMovePiece() || dragging || ev.button !== 0) return;
   ndcFrom(ev); raycaster.setFromCamera(ndc, camera);
   const hits = raycaster.intersectObjects(puzzle.pieces.filter(m => !m.userData.placed), false);
-  if (!hits.length) return;
-  dragging = hits[0].object; controls.enabled = false;
-  const gp = groundPoint(ev); dragOffset.copy(dragging.position).sub(new THREE.Vector3(gp.x, dragging.position.y, gp.z));
-  dragging.position.y = 1.2;
+  if (!hits.length) { selectPiece(null); return; }
+  const piece = hits[0].object;
+  selectPiece(piece);
+  dragging = { piece, pointer: ev.pointerId, x: ev.clientX, y: ev.clientY, moved: false };
+  controls.enabled = false;
+  const gp = groundPoint(ev);
+  dragOffset.set(piece.position.x - gp.x, 0, piece.position.z - gp.z);
 });
 addEventListener('pointermove', (ev) => {
-  if (!dragging) return;
-  const gp = groundPoint(ev); dragging.position.x = gp.x + dragOffset.x; dragging.position.z = gp.z + dragOffset.z;
+  if (dragging?.pointer !== ev.pointerId) return;
+  if (Math.hypot(ev.clientX - dragging.x, ev.clientY - dragging.y) >= 4) dragging.moved = true;
+  if (!dragging.moved) return;
+  const gp = groundPoint(ev);
+  dragging.piece.position.set(gp.x + dragOffset.x, 1.2, gp.z + dragOffset.z);
 });
-addEventListener('pointerup', () => {
-  if (!dragging) return;
-  const m = dragging; dragging = null; controls.enabled = true;
-  tryPlace(m);
-});
+function endDrag(event) {
+  if (dragging?.pointer !== event.pointerId) return;
+  const { piece, moved } = dragging;
+  dragging = null; controls.enabled = true;
+  if (!moved) return;
+  piece.position.y = 0.2;
+  if (event.type === 'pointerup' && canMovePiece()) tryPlace(piece);
+}
+addEventListener('pointerup', endDrag);
+addEventListener('pointercancel', endDrag);
 
-// a piece is correct if its centre is near its home slot centre
+const snapDistance = () => Math.min(BOARD_W / puzzle.cols, BOARD_D / puzzle.rows) * 0.45;
+const distanceToSlot = piece => Math.hypot(piece.position.x - piece.userData.home.x, piece.position.z - piece.userData.home.z);
 function tryPlace(m) {
-  const dist = Math.hypot(m.position.x, m.position.z);   // home is baked at origin
-  const near = Math.max(BOARD_W, BOARD_D) * 0.055;
-  if (dist < near) {
+  const dist = distanceToSlot(m);
+  const near = snapDistance();
+  const aligned = Math.abs(wrapAngle(m.rotation.y)) <= ROTATION_STEP + 1e-8;
+  if (dist <= near && aligned) {
     if (friends.online) {
       m.position.y = 0.2;
       friends.move(m.userData.id);
     } else placePiece(m);
   } else if (dist < near * 2.4) {
     if (difficulty !== 'hard') flashDot(m, 0xf2c200);    // yellow = close
-    setMsg('Close. Nudge it onto its spot.');
+    setMsg(dist <= near ? 'Right spot. Rotate the piece to line it up.' : 'Close. Nudge it onto its spot.');
     m.position.y = 0.2;
   } else {
     if (difficulty !== 'hard') flashDot(m, 0xe0533b);    // red = wrong, stays liftable
@@ -337,9 +401,15 @@ function tryPlace(m) {
     m.position.y = 0.2;
   }
 }
+function snapHome(piece) {
+  piece.position.copy(piece.userData.home);
+  piece.rotation.y = 0;
+  piece.userData.placed = true;
+  if (selected === piece) selectPiece(null);
+}
 function placePiece(m, replay = false) {
-  m.position.set(0, 0, 0); m.rotation.y = 0;
-  m.userData.placed = true; placed++;
+  snapHome(m);
+  placed++;
   players[cur].score++;
   if (!replay && difficulty !== 'hard') flashDot(m, 0x3ad46a);
   if (placed === puzzle.pieces.length) { renderScoreboard(); saveState(); endGame(); return; }
@@ -394,7 +464,7 @@ function renderLobby() {
   document.getElementById('lobby').innerHTML = `
     <div class="card">
       <h2>Puzzle Maker</h2>
-      <p class="tag">Build the picture from its pieces. Drag a piece to its spot: green fuses it, yellow is close, red is wrong (lift it and retry).</p>
+      <p class="tag">Tap or click a piece to select it. Rotate it with the 15° buttons or Q and E, then drag it to its spot. It snaps when it is close enough and within 15° of the right angle.</p>
       ${contHTML}
       <div class="modebtns">
         <button class="${mode === 'solo' ? 'sel' : ''}" onclick="setMode('solo')">Solo</button>
@@ -475,25 +545,50 @@ function loadSource(src, pieceCount, restore, { layout, ready } = {}) {
   }, undefined, () => setMsg('Could not load that image.'));
 }
 
-function resetView() { const d = BOARD_D; camera.position.set(0, d * 0.78 + 8, d * 1.2 + 12); controls.target.set(0, 0, 0); controls.update(); }
+function resetView() {
+  const padding = Math.hypot(BOARD_W / puzzle.cols, BOARD_D / puzzle.rows);
+  let halfWidth = BOARD_W / 2, front = BOARD_D / 2, back = -front;
+  for (const piece of puzzle.pieces) {
+    halfWidth = Math.max(halfWidth, Math.abs(piece.position.x) + padding);
+    front = Math.max(front, piece.position.z + padding);
+    back = Math.min(back, piece.position.z - padding);
+  }
+  controls.target.set(0, 0, (front + back) / 2);
+  const direction = new THREE.Vector3(0, 0.95, 1).normalize();
+  const up = new THREE.Vector3(0, direction.z, -direction.y);
+  const vertical = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const horizontal = vertical * camera.aspect;
+  let distance = 0;
+  for (const point of [
+    new THREE.Vector3(halfWidth, 0, front),
+    new THREE.Vector3(halfWidth, 0, back),
+    new THREE.Vector3(BOARD_W * 0.3, BOARD_D * 0.6 + 1.5, -BOARD_D / 2 - 2.5),
+  ]) {
+    point.sub(controls.target);
+    distance = Math.max(distance, point.dot(direction) +
+      Math.max(point.x / horizontal, Math.abs(point.dot(up)) / vertical));
+  }
+  distance *= 1.12;
+  camera.far = Math.max(400, distance * 2.5);
+  camera.updateProjectionMatrix();
+  controls.maxDistance = Math.max(400, distance * 1.3);
+  camera.position.copy(controls.target).addScaledVector(direction, distance);
+  controls.update();
+}
 function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
 addEventListener('resize', resize);
-const ZERO = new THREE.Vector3(0, 0, 0);
 function tick() {
   requestAnimationFrame(tick);
   if (puzzle) for (const m of puzzle.pieces) {
     const a = m.userData.anim; if (!a) continue;
     a.t = Math.min(1, a.t + 0.028);
     const e = a.t * a.t * (3 - 2 * a.t);
-    m.position.lerpVectors(a.from, ZERO, e);
+    m.position.lerpVectors(a.from, m.userData.home, e);
+    m.rotation.y = a.angle * (1 - e);
     m.position.y = a.from.y * (1 - e) + Math.sin(e * Math.PI) * 1.6;   // lift-and-drop arc
     if (a.t >= 1) {
-      m.position.set(0, 0, 0); delete m.userData.anim; m.userData.placed = true; placed++;
-      if (players[cur]) players[cur].score++;
-      if (difficulty !== 'hard') flashDot(m, 0x3ad46a);
-      renderScoreboard(); saveState();
-      if (placed === puzzle.pieces.length) endGame();
-      else if (players.length > 1) cur = (cur + 1) % players.length;
+      delete m.userData.anim;
+      placePiece(m);
     }
   }
   controls.update(); renderer.render(scene, camera);
@@ -505,7 +600,12 @@ window.pzAutoPlay = function (opts) {
   const order = puzzle.pieces.filter(m => !m.userData.placed).sort(() => Math.random() - 0.5);
   const n = opts.count ? Math.min(opts.count, order.length) : order.length;
   let i = 0; const stagger = opts.stagger || 300;
-  (function step() { if (i >= n) return; order[i++].userData.anim = { from: order[i - 1].position.clone(), t: 0 }; setTimeout(step, stagger); })();
+  (function step() {
+    if (i >= n) return;
+    const piece = order[i++];
+    piece.userData.anim = { from: piece.position.clone(), angle: wrapAngle(piece.rotation.y), t: 0 };
+    setTimeout(step, stagger);
+  })();
 };
 let _rec = null, _chunks = [];
 window.pzRecordStart = function (fps) {
@@ -566,7 +666,7 @@ const friends = friendTable({
 window.openLobby = openLobby; window.startFromLobby = startFromLobby; window.setMode = setMode; window.continueGame = continueGame;
 window.cycleAvatar = cycleAvatar; window.cycleColor = cycleColor; window.toggleSeat = toggleSeat; window.setName = setName; window.onUpload = onUpload;
 window.inviteFriend = friends.invite;
-window.toggleOutlines = () => setOutlines(!outlinesOn);
+window.toggleOutlines = () => { if (puzzle) setOutlines(!outlinesOn); };
 window.solveHint = () => { if (puzzle) scatter(); };
 
 resize(); tick(); openLobby(); friends.join();

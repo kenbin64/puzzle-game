@@ -1,4 +1,4 @@
-export function friendTable({ settings, update, status }) {
+export function friendTable({ settings, update, status, allowBots = false }) {
   const page = new URL(location.href);
   const base = page.pathname.replace(/index\.html$/, '').replace(/\/?$/, '/');
   let code = page.searchParams.get('code')?.toUpperCase() || '';
@@ -18,11 +18,17 @@ export function friendTable({ settings, update, status }) {
     <button class="btn ghost" data-leave>Leave table</button></div>
     <p role="status"></p>
     <ul></ul>
+    <label data-host-music hidden><input type="checkbox" data-music-off> Start with music off</label>
+    ${allowBots ? '<label data-bot-controls hidden>Bot seats <select data-bots></select></label>' : ''}
     <button class="btn" data-start hidden disabled>Start online game</button>`;
   document.body.append(dialog);
-  const link = dialog.querySelector('input');
+  const link = dialog.querySelector('input[readonly]');
   const message = dialog.querySelector('[role=status]');
   const start = dialog.querySelector('[data-start]');
+  const botControls = dialog.querySelector('[data-bot-controls]');
+  const botSelect = dialog.querySelector('[data-bots]');
+  const hostMusic = dialog.querySelector('[data-host-music]');
+  const musicOff = dialog.querySelector('[data-music-off]');
   const send = data => {
     if (socket?.readyState !== WebSocket.OPEN) return false;
     socket.send(JSON.stringify(data));
@@ -37,6 +43,14 @@ export function friendTable({ settings, update, status }) {
     const connected = table.players.filter(player => player.connected);
     start.hidden = !host();
     start.disabled = connected.length < 2;
+    hostMusic.hidden = !host();
+    if (botControls) {
+      botControls.hidden = !host();
+      const maximum = 4 - table.players.filter(player => !player.is_ai).length;
+      const bots = table.players.filter(player => player.is_ai).length;
+      botSelect.replaceChildren(...Array.from({ length: maximum + 1 }, (_, number) =>
+        new Option(String(number), String(number), false, number === bots)));
+    }
     dialog.querySelector('ul').replaceChildren(...connected.map(player => {
       const item = document.createElement('li');
       item.textContent = player.username + (player.user_id === you ? ' (you)' : '');
@@ -66,11 +80,16 @@ export function friendTable({ settings, update, status }) {
         if (!online && !table.started) showTable();
       }
       if (data.t === 'state') {
+        const entering = !online;
         waiting = false;
         online = true;
         dialog.close();
         update(data.state, you);
+        if (entering) window.dispatchEvent(new CustomEvent('bfx:table-start', {
+          detail: { musicOff: data.state.musicOff ?? data.state.options?.musicOff },
+        }));
       }
+      if (data.t === 'reaction') window.dispatchEvent(new CustomEvent('bfx:reaction', { detail: data }));
       if (data.t === 'error') show(data.message || 'Could not join the table.');
     });
     connection.addEventListener('close', event => {
@@ -124,11 +143,15 @@ export function friendTable({ settings, update, status }) {
     } catch { link.select(); }
   };
   dialog.querySelector('[data-leave]').onclick = () => location.assign(base);
+  if (botSelect) botSelect.onchange = () => send({ t: 'bots', count: Number(botSelect.value) });
+  window.addEventListener('bfx:send-reaction', ({ detail }) => {
+    if (online) send({ t: 'chat', payload: { reaction: detail } });
+  });
   dialog.addEventListener('cancel', event => event.preventDefault());
   start.onclick = () => {
     if (!host()) return;
     const rules = options || settings();
-    if (rules && send({ t: 'rules', ...rules })) send({ t: 'start' });
+    if (rules && send({ t: 'rules', ...rules, musicOff: musicOff.checked })) send({ t: 'start' });
   };
 
   return {

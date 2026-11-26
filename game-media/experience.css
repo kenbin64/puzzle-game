@@ -1,0 +1,18 @@
+.bfx-tools{position:fixed;top:10px;left:10px;display:flex;gap:5px;align-items:center;z-index:18;font:600 13px system-ui;color:#eff9f5}
+.bfx-tools img{width:30px;height:30px;object-fit:contain}
+.bfx-tool,.bfx-picker button,.bfx-intro button{display:inline-grid;place-items:center;min-width:33px;min-height:33px;border:1px solid #678583;border-radius:8px;background:#14282b;color:#eff9f5;font:700 15px system-ui;text-decoration:none;cursor:pointer}
+.bfx-tool:focus-visible,.bfx-picker button:focus-visible,.bfx-intro button:focus-visible{outline:2px solid #f0d391;outline-offset:3px}
+.bfx-tools[data-game="cubicles"]{top:auto;bottom:9px;left:9px}
+.bfx-tools[data-game="chomp"],.bfx-tools[data-game="fasttrack"]{top:9px;left:50%;transform:translateX(-50%)}
+.bfx-picker{position:absolute;top:40px;left:0;display:grid;grid-template-columns:repeat(6,36px);gap:5px;padding:8px;border:1px solid #678583;border-radius:10px;background:#132426;box-shadow:0 9px 24px #000a}
+.bfx-tools[data-game="cubicles"] .bfx-picker{top:auto;bottom:42px}
+.bfx-picker[hidden]{display:none}
+.bfx-picker button{font-size:19px}
+.bfx-reactions{position:fixed;left:50%;bottom:75px;transform:translateX(-50%);z-index:20;pointer-events:none;display:grid;gap:5px;font:600 14px system-ui;color:#f8fdfc}
+.bfx-reactions div{padding:8px 12px;border:1px solid #678583;border-radius:999px;background:#12292ae8}
+.bfx-intro{width:min(900px,calc(100% - 28px));max-height:94vh;padding:0;border:1px solid #678583;border-radius:14px;overflow:hidden;background:#0c181b;color:#f0f7f3;font:600 14px system-ui}
+.bfx-intro::backdrop{background:#000d}
+.bfx-intro video{display:block;width:100%;max-height:72vh;background:#0c181b;aspect-ratio:16/9;object-fit:contain}
+.bfx-intro footer{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 12px;border-top:1px solid #678583}
+.bfx-intro button{display:inline-block;padding:5px 9px}
+@media(max-width:530px){.bfx-tools{top:7px;left:6px}.bfx-tool{min-width:29px;min-height:29px}.bfx-tools img{width:24px;height:24px}.bfx-tools[data-game="cubicles"]{bottom:5px}.bfx-intro footer{flex-wrap:wrap}}

@@ -52,7 +52,7 @@
   .btn.full{width:100%;font-size:16px;padding:12px;margin-top:8px}
   .hint{text-align:center;color:var(--dim);font-size:12px;margin-top:9px}
 </style>
-</head>
+<link rel="icon" href="./game-media/puzzlemaker/logo.svg" type="image/svg+xml"><link rel="stylesheet" href="./game-media/experience.css"></head>
 <body>
   <canvas id="cv"></canvas>
   <div class="overlay top">
@@ -699,5 +699,5 @@ window.solveHint = () => { if (puzzle) scatter(); };
 
 resize(); tick(); openLobby(); friends.join();
 </script>
-</body>
+<script type="module" src="./game-media/experience.mjs" data-bfx-game="puzzlemaker"></script></body>
 </html>
